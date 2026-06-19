@@ -67,6 +67,7 @@ Every push bumps the version in `version.go`. Version log:
 | v0.2.0  | L2    | Health checker: ticker goroutines, flap protection (2 consecutive fails to flip) |
 | v0.3.0  | L3    | Routing algorithms: round-robin, weighted, consistent-hash; dashboard routing panel + dispatch stats |
 | v0.4.0  | L4    | Live dispatcher: continuous request stream, per-backend traffic bars, RPS counter, start/stop/reset |
+| v0.4.1  | —     | Hover tooltips on every interactive element — algorithms, health states, buttons, labels, traffic bars |
 
 ## Layer roadmap
 

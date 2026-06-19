@@ -82,6 +82,31 @@ Every push bumps the version in `version.go`. Version log:
 - **Layer 5** — failover & draining: kill a backend/DC, watch traffic rebalance live. ✅ `v0.5.0`
 - **Layer 6** — global traffic management: GeoDNS / latency-based DC selection. ✅ `v0.6.0`
 
+## Ideas backlog (nice to have)
+
+### Real-world failure scenarios
+- **Spot instance interruption** — 2-minute countdown timer that auto-triggers drain → remove on a backend. Models AWS reclaiming a spot EC2. Shows whether the LB redistributes fast enough before the node disappears.
+- **Karpenter consolidation** — simulate node consolidation: cordon a backend (no new pods), drain it gracefully, then remove it. Visualize the in-flight request window during drain.
+- **Cascading failure** — one DC goes down, surviving DC gets overloaded (RPS > capacity), latency climbs, backends start timing out and going unhealthy one by one. Watch the domino effect.
+- **Split-brain** — two LB instances disagree on backend health (network partition between them). Who wins? Which clients get good responses?
+
+### Observability
+- **P50 / P95 / P99 latency histogram** — track simulated backend latency distribution over time, not just the last value.
+- **Error rate panel** — % of requests that hit no-backend / conflict / timeout, plotted over time.
+- **Request replay** — pick any `X-Request-ID` from the trace log and re-run it to see if the result changes (useful for debugging flapping).
+
+### Routing improvements
+- **Least-connections algorithm** — route to the backend with fewest in-flight requests. Requires tracking active connections per backend.
+- **Circuit breaker** — after N errors from a backend in a time window, open the circuit (stop sending) and half-open after a cooldown. Classic Hystrix pattern.
+- **Retry + hedge** — on timeout, retry to a different backend OR send a duplicate request (hedged request) and use whichever responds first.
+- **Rate limiting per client IP** — reject requests from IPs exceeding N req/s. Show in the pipeline trace when a request is rate-limited.
+
+### Infrastructure
+- **Persistent state** — swap the in-memory registry for a Redis/Scylla backend. The registry interface is already the seam — it's a drop-in.
+- **Multi-instance LB** — run two lbsim processes sharing state via Redis. Show how config changes propagate (xDS-style push).
+- **Real TCP health checks** — replace the random probe with actual TCP dials to real local servers.
+- **Config export** — export the full cluster + route config as JSON or Envoy xDS format.
+
 ## Architecture note
 
 The registry's method set is the seam. Today it's an in-memory map behind a

@@ -85,6 +85,26 @@ const dashboardHTML = `<!DOCTYPE html>
   .empty { color: #8b949e; font-size: 12px; padding: 18px 14px; }
   .error-bar { background: #3a1a1a; border: 1px solid #da3633; color: #f85149; padding: 7px 12px; border-radius: 6px; font-size: 12px; margin-bottom: 14px; display: none; }
 
+  /* ── failover lab ── */
+  .dc-grid { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 14px; }
+  .dc-card { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 12px 16px; min-width: 200px; }
+  .dc-card.dc-impaired { border-color: #da363388; }
+  .dc-card.dc-draining { border-color: #9e6a0388; }
+  .dc-name  { font-size: 13px; font-weight: 600; color: #f0f6fc; margin-bottom: 6px; }
+  .dc-count { font-size: 11px; color: #8b949e; margin-bottom: 10px; }
+  .dc-count .ok { color: #3fb950; }
+  .dc-count .bad { color: #f85149; }
+  .dc-count .drain { color: #d29922; }
+  .dc-actions { display: flex; gap: 6px; }
+  .event-log { margin-top: 14px; }
+  .event-log-title { font-size: 11px; color: #8b949e; margin-bottom: 6px; }
+  .event-list { list-style: none; font-size: 11px; color: #8b949e; max-height: 100px; overflow-y: auto; display: flex; flex-direction: column; gap: 3px; }
+  .event-list li { padding: 3px 0; border-bottom: 1px solid #21262d; }
+  .event-list .ev-time { color: #484f58; margin-right: 8px; }
+  .event-list .ev-fail { color: #f85149; }
+  .event-list .ev-drain { color: #d29922; }
+  .event-list .ev-ok   { color: #3fb950; }
+
   /* ── tooltip ── */
   #tip {
     position: fixed;
@@ -111,7 +131,7 @@ const dashboardHTML = `<!DOCTYPE html>
 <div id="tip"></div>
 
 <h1>lbsim — Control Plane</h1>
-<p class="subtitle">L1 registry · L2 health checking · L3 routing · L4 dispatcher · hover any element for explanation</p>
+<p class="subtitle">L1 registry · L2 health checking · L3 routing · L4 dispatcher · L5 failover · hover any element for explanation</p>
 
 <div id="error-bar" class="error-bar"></div>
 
@@ -168,6 +188,16 @@ const dashboardHTML = `<!DOCTYPE html>
   </div>
 
   <div id="disp-bars" class="disp-bars"></div>
+</div>
+
+<!-- ── Layer 5: Failover Lab ────────────────────── -->
+<div class="panel">
+  <h2>Failover Lab — Layer 5</h2>
+  <div id="dc-grid" class="dc-grid"></div>
+  <div class="event-log">
+    <div class="event-log-title">event log</div>
+    <ul id="event-list" class="event-list"><li style="color:#484f58">no events yet — try failing a DC</li></ul>
+  </div>
 </div>
 
 <!-- ── Layer 3: Manual routing ──────────────────── -->
@@ -417,6 +447,7 @@ async function load() {
 }
 
 function render(clusters) {
+  renderDCGrid(clusters);
   const el = document.getElementById('clusters');
   if (!clusters || !clusters.length) { el.innerHTML = '<p class="empty">no clusters</p>'; return; }
   el.innerHTML = clusters.map(c => {
@@ -496,6 +527,77 @@ function showError(msg) {
   el.textContent = msg;
   el.style.display = 'block';
   setTimeout(() => el.style.display='none', 4000);
+}
+
+// ── failover lab ─────────────────────────────────────
+const events = [];
+
+function logEvent(msg, cls) {
+  const time = new Date().toLocaleTimeString();
+  events.unshift({time, msg, cls});
+  if (events.length > 20) events.pop();
+  renderEvents();
+}
+
+function renderEvents() {
+  const ul = document.getElementById('event-list');
+  if (!events.length) { ul.innerHTML = '<li style="color:#484f58">no events yet</li>'; return; }
+  ul.innerHTML = events.map(e =>
+    ` + "`" + `<li><span class="ev-time">${e.time}</span><span class="${e.cls}">${e.msg}</span></li>` + "`" + `
+  ).join('');
+}
+
+async function dcAction(cluster, dc, action) {
+  try {
+    const res = await fetch('/failover', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({cluster, dc, action}),
+    });
+    if (!res.ok) { const e = await res.json(); throw new Error(e.error); }
+    const data = await res.json();
+    const cls  = action === 'unhealthy' ? 'ev-fail' : action === 'draining' ? 'ev-drain' : 'ev-ok';
+    const verb = action === 'unhealthy' ? '⚡ failed' : action === 'draining' ? '⏳ draining' : '✓ recovered';
+    logEvent(` + "`" + `${dc} DC ${verb} — ${data.affected} backend(s) → ${action}` + "`" + `, cls);
+    load();
+  } catch(e) { showError(e.message); }
+}
+
+function renderDCGrid(clusters) {
+  // aggregate backends by dc across all clusters
+  const dcs = {};
+  for (const c of (clusters || [])) {
+    for (const b of Object.values(c.backends || {})) {
+      if (!dcs[b.dc]) dcs[b.dc] = {healthy: 0, unhealthy: 0, draining: 0, cluster: c.name};
+      dcs[b.dc][b.health]++;
+    }
+  }
+  const grid = document.getElementById('dc-grid');
+  const entries = Object.entries(dcs);
+  if (!entries.length) { grid.innerHTML = '<p style="color:#8b949e;font-size:12px">no backends registered</p>'; return; }
+
+  grid.innerHTML = entries.map(([dc, s]) => {
+    const total   = s.healthy + s.unhealthy + s.draining;
+    const impaired = s.unhealthy > 0;
+    const draining = s.draining > 0 && s.unhealthy === 0;
+    const cardCls  = impaired ? 'dc-card dc-impaired' : draining ? 'dc-card dc-draining' : 'dc-card';
+    const countParts = [];
+    if (s.healthy)   countParts.push(` + "`" + `<span class="ok">${s.healthy} healthy</span>` + "`" + `);
+    if (s.draining)  countParts.push(` + "`" + `<span class="drain">${s.draining} draining</span>` + "`" + `);
+    if (s.unhealthy) countParts.push(` + "`" + `<span class="bad">${s.unhealthy} unhealthy</span>` + "`" + `);
+    return ` + "`" + `
+    <div class="${cardCls}">
+      <div class="dc-name">${dc}</div>
+      <div class="dc-count">${countParts.join(' · ')} / ${total} total</div>
+      <div class="dc-actions">
+        <button class="btn btn-red" onclick="dcAction('${s.cluster}','${dc}','unhealthy')"
+          data-tip="⚡ Sudden failure&#10;&#10;All ${dc} backends go unhealthy instantly — simulates a DC going dark (power outage, network partition). The router stops sending traffic here on the very next request.&#10;&#10;Watch the dispatcher bars: ${dc}'s bar will flatline and the other DC absorbs 100% of traffic.">⚡ Fail</button>
+        <button class="btn btn-yellow" onclick="dcAction('${s.cluster}','${dc}','draining')"
+          data-tip="⏳ Graceful drain&#10;&#10;All ${dc} backends enter draining state — simulates a planned maintenance window. No NEW requests are routed here, but any in-flight requests are allowed to finish.&#10;&#10;Safer than a sudden fail for deploys and upgrades.">⏳ Drain</button>
+        <button class="btn btn-green" onclick="dcAction('${s.cluster}','${dc}','healthy')"
+          data-tip="✓ Recover DC&#10;&#10;All ${dc} backends return to healthy — simulates the DC coming back online after an outage or finishing maintenance.&#10;&#10;The router will immediately start sending traffic here again. Watch the bars rebalance.">✓ Recover</button>
+      </div>
+    </div>` + "`" + `;
+  }).join('');
 }
 
 load();

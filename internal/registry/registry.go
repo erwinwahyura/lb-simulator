@@ -149,6 +149,27 @@ func (r *Registry) SetHealth(cluster, backendID string, h HealthState) error {
 	return nil
 }
 
+// SetDCHealth flips every backend in a datacenter to the given health state.
+// This is the "kill a DC" lever: one call takes down (or recovers) an entire
+// site. Returns how many backends were affected.
+func (r *Registry) SetDCHealth(cluster, dc string, h HealthState) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	c, ok := r.clusters[cluster]
+	if !ok {
+		return 0, ErrClusterNotFound
+	}
+	n := 0
+	for _, b := range c.Backends {
+		if b.DC == dc {
+			b.Health = h
+			b.LastSeen = time.Now()
+			n++
+		}
+	}
+	return n, nil
+}
+
 // HealthyBackends returns only the backends a router may select from.
 // This is THE read path the routing layer will call on every request, so it
 // returns a copied slice (snapshot) — the caller iterates without holding the

@@ -33,6 +33,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /dispatcher/stop", s.dispatcherStop)
 	mux.HandleFunc("POST /dispatcher/reset", s.dispatcherReset)
 	mux.HandleFunc("GET /dispatcher/stats", s.dispatcherStats)
+	mux.HandleFunc("POST /failover", s.failover)
 	return mux
 }
 
@@ -185,4 +186,35 @@ func (s *Server) dispatcherReset(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) dispatcherStats(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.dispatcher.Stats())
+}
+
+type failoverReq struct {
+	Cluster string             `json:"cluster"`
+	DC      string             `json:"dc"`
+	Action  registry.HealthState `json:"action"` // healthy | unhealthy | draining
+}
+
+func (s *Server) failover(w http.ResponseWriter, r *http.Request) {
+	var req failoverReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if req.Cluster == "" {
+		req.Cluster = "api"
+	}
+	switch req.Action {
+	case registry.Healthy, registry.Unhealthy, registry.Draining:
+	default:
+		writeErr(w, http.StatusBadRequest, "action must be healthy|unhealthy|draining")
+		return
+	}
+	n, err := s.reg.SetDCHealth(req.Cluster, req.DC, req.Action)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"dc": req.DC, "action": req.Action, "affected": n,
+	})
 }

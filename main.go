@@ -8,6 +8,7 @@ import (
 
 	"lbsim/internal/api"
 	"lbsim/internal/dispatcher"
+	"lbsim/internal/georouter"
 	"lbsim/internal/healthcheck"
 	"lbsim/internal/registry"
 	"lbsim/internal/router"
@@ -32,7 +33,8 @@ func main() {
 
 	rtr := router.New(reg)
 	disp := dispatcher.New(rtr)
-	srv := api.NewServer(reg, rtr, disp)
+	geo := georouter.New(reg)
+	srv := api.NewServer(reg, rtr, disp, geo)
 
 	addr := ":8080"
 	log.Printf("lbsim %s — control plane API listening on %s", Version, addr)

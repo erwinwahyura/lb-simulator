@@ -69,6 +69,7 @@ Every push bumps the version in `version.go`. Version log:
 | v0.4.0  | L4    | Live dispatcher: continuous request stream, per-backend traffic bars, RPS counter, start/stop/reset |
 | v0.4.1  | —     | Hover tooltips on every interactive element — algorithms, health states, buttons, labels, traffic bars |
 | v0.5.0  | L5    | Failover & draining: SetDCHealth bulk API, Failover Lab panel, per-DC cards, event log |
+| v0.6.0  | L6    | Geo routing: latency-based DC selection with fallback; /bench endpoint; Capacity Test panel |
 
 ## Layer roadmap
 
@@ -78,7 +79,7 @@ Every push bumps the version in `version.go`. Version log:
 - **Layer 3** — routing algorithms: round-robin, weighted, consistent hashing. ✅ `v0.3.0`
 - **Layer 4** — the dispatcher (fake data plane) + request distribution metrics. ✅ `v0.4.0`
 - **Layer 5** — failover & draining: kill a backend/DC, watch traffic rebalance live. ✅ `v0.5.0`
-- **Layer 6** — global traffic management: GeoDNS / latency-based DC selection.
+- **Layer 6** — global traffic management: GeoDNS / latency-based DC selection. ✅ `v0.6.0`
 
 ## Architecture note
 

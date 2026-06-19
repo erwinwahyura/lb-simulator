@@ -4,20 +4,25 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	"lbsim/internal/dispatcher"
+	"lbsim/internal/georouter"
 	"lbsim/internal/registry"
 	"lbsim/internal/router"
 )
+
+var timeNow = time.Now
 
 type Server struct {
 	reg        *registry.Registry
 	router     *router.Router
 	dispatcher *dispatcher.Dispatcher
+	geo        *georouter.GeoRouter
 }
 
-func NewServer(reg *registry.Registry, rtr *router.Router, d *dispatcher.Dispatcher) *Server {
-	return &Server{reg: reg, router: rtr, dispatcher: d}
+func NewServer(reg *registry.Registry, rtr *router.Router, d *dispatcher.Dispatcher, geo *georouter.GeoRouter) *Server {
+	return &Server{reg: reg, router: rtr, dispatcher: d, geo: geo}
 }
 
 func (s *Server) Routes() http.Handler {
@@ -34,6 +39,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /dispatcher/reset", s.dispatcherReset)
 	mux.HandleFunc("GET /dispatcher/stats", s.dispatcherStats)
 	mux.HandleFunc("POST /failover", s.failover)
+	mux.HandleFunc("POST /geo-route", s.geoRoute)
+	mux.HandleFunc("POST /bench", s.bench)
 	return mux
 }
 
@@ -216,5 +223,64 @@ func (s *Server) failover(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"dc": req.DC, "action": req.Action, "affected": n,
+	})
+}
+
+// geoRoute picks a backend using latency-based DC selection.
+type geoRouteReq struct {
+	Cluster string `json:"cluster"`
+	Region  string `json:"region"`
+}
+
+func (s *Server) geoRoute(w http.ResponseWriter, r *http.Request) {
+	var req geoRouteReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if req.Cluster == "" {
+		req.Cluster = "api"
+	}
+	result, err := s.geo.Pick(req.Cluster, req.Region)
+	if err != nil {
+		writeErr(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+// bench measures how fast the routing layer runs internally — pure Go speed
+// with no HTTP overhead. The client supplies n (number of picks to run).
+type benchReq struct {
+	N       int    `json:"n"`
+	Cluster string `json:"cluster"`
+}
+
+func (s *Server) bench(w http.ResponseWriter, r *http.Request) {
+	var req benchReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if req.N <= 0 {
+		req.N = 10000
+	}
+	if req.Cluster == "" {
+		req.Cluster = "api"
+	}
+
+	start := timeNow()
+	for i := 0; i < req.N; i++ {
+		_, _ = s.router.Pick(req.Cluster, router.RoundRobin, "")
+	}
+	elapsed := timeNow().Sub(start)
+
+	rps := float64(req.N) / elapsed.Seconds()
+	nsPerOp := elapsed.Nanoseconds() / int64(req.N)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"n":          req.N,
+		"elapsed_ms": elapsed.Milliseconds(),
+		"rps":        int64(rps),
+		"ns_per_op":  nsPerOp,
 	})
 }

@@ -85,6 +85,27 @@ const dashboardHTML = `<!DOCTYPE html>
   .empty { color: #8b949e; font-size: 12px; padding: 18px 14px; }
   .error-bar { background: #3a1a1a; border: 1px solid #da3633; color: #f85149; padding: 7px 12px; border-radius: 6px; font-size: 12px; margin-bottom: 14px; display: none; }
 
+  /* ── geo routing ── */
+  .region-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+  .region-btn { padding: 8px 14px; font-size: 12px; font-family: inherit; border-radius: 6px; border: 1px solid #30363d; cursor: pointer; background: #21262d; color: #e6edf3; text-align: left; }
+  .region-btn:hover { border-color: #58a6ff44; }
+  .region-btn .flag { font-size: 16px; margin-right: 6px; }
+  .geo-result { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 12px 14px; font-size: 12px; min-height: 48px; color: #8b949e; }
+  .geo-scores { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+  .geo-score { padding: 4px 10px; border-radius: 4px; font-size: 11px; border: 1px solid #30363d; }
+  .geo-score.chosen  { border-color: #238636; background: #1a3a2a; color: #3fb950; }
+  .geo-score.down    { border-color: #484f58; background: #161b22; color: #484f58; text-decoration: line-through; }
+  .geo-score.other   { background: #161b22; color: #8b949e; }
+
+  /* ── capacity test ── */
+  .cap-result { margin-top: 14px; font-size: 12px; }
+  .cap-big { font-size: 28px; font-weight: 700; color: #f0f6fc; }
+  .cap-label { font-size: 10px; color: #8b949e; text-transform: uppercase; letter-spacing: .06em; }
+  .cap-grid { display: flex; gap: 28px; margin-top: 10px; }
+  .cap-note { font-size: 11px; color: #484f58; margin-top: 8px; line-height: 1.5; }
+  .progress-bar { height: 6px; background: #21262d; border-radius: 3px; margin-top: 10px; overflow: hidden; }
+  .progress-fill { height: 100%; background: #1f6feb; border-radius: 3px; transition: width .1s; }
+
   /* ── failover lab ── */
   .dc-grid { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 14px; }
   .dc-card { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 12px 16px; min-width: 200px; }
@@ -131,7 +152,7 @@ const dashboardHTML = `<!DOCTYPE html>
 <div id="tip"></div>
 
 <h1>lbsim — Control Plane</h1>
-<p class="subtitle">L1 registry · L2 health checking · L3 routing · L4 dispatcher · L5 failover · hover any element for explanation</p>
+<p class="subtitle">L1 registry · L2 health checking · L3 routing · L4 dispatcher · L5 failover · L6 geo routing · hover any element for explanation</p>
 
 <div id="error-bar" class="error-bar"></div>
 
@@ -188,6 +209,67 @@ const dashboardHTML = `<!DOCTYPE html>
   </div>
 
   <div id="disp-bars" class="disp-bars"></div>
+</div>
+
+<!-- ── Layer 6: Geo Routing ──────────────────────── -->
+<div class="panel">
+  <h2>Geo Routing — Layer 6</h2>
+  <p style="font-size:11px;color:#8b949e;margin-bottom:12px"
+     data-tip="GeoDNS / latency-based DC selection&#10;&#10;Before picking a backend, the geo router first picks WHICH datacenter to route to — based on where the user is. Closest DC with healthy backends wins.&#10;&#10;If the preferred DC goes down, it automatically falls back to the next-closest one. This is the 'global traffic management' layer above round-robin.">
+    Click a region to route a request. The geo router picks the lowest-latency healthy DC, then round-robins within it.
+  </p>
+  <div class="region-grid">
+    <button class="region-btn" onclick="geoRoute('japan')"
+      data-tip="Japan → prefers tokyo [8ms] over osaka [25ms]&#10;&#10;Try: fail the tokyo DC, then click Japan again. The geo router falls back to osaka automatically.">
+      <span class="flag">🗾</span>Japan
+    </button>
+    <button class="region-btn" onclick="geoRoute('korea')"
+      data-tip="Korea → prefers osaka [12ms] over tokyo [30ms]&#10;&#10;Korea is closer to osaka geographically, so osaka wins even though both are in Japan.">
+      <span class="flag">🇰🇷</span>Korea
+    </button>
+    <button class="region-btn" onclick="geoRoute('us')"
+      data-tip="US → both DCs are far (tokyo 105ms, osaka 110ms)&#10;&#10;US traffic goes to the slightly closer DC. In a real system you'd add a us-west DC. Try adding one via Register Backend above.">
+      <span class="flag">🇺🇸</span>US
+    </button>
+    <button class="region-btn" onclick="geoRoute('europe')"
+      data-tip="Europe → prefers osaka [190ms] over tokyo [195ms]&#10;&#10;Both are very far. 5ms difference. In production you'd add a europe DC. Without one, geo routing still works — it just picks the least-bad option.">
+      <span class="flag">🇪🇺</span>Europe
+    </button>
+    <button class="region-btn" onclick="geoRoute('australia')"
+      data-tip="Australia → prefers osaka [75ms] over tokyo [80ms]&#10;&#10;Closest of all non-Japan regions to the Japan DCs.">
+      <span class="flag">🇦🇺</span>Australia
+    </button>
+  </div>
+  <div class="geo-result" id="geo-result">click a region to see latency-based DC selection</div>
+</div>
+
+<!-- ── Capacity Test ──────────────────────────────── -->
+<div class="panel">
+  <h2>Server Capacity</h2>
+  <p style="font-size:11px;color:#8b949e;margin-bottom:12px"
+     data-tip="Two numbers matter:&#10;&#10;Internal RPS — how fast the routing logic runs in pure Go (no HTTP). Measures the mutex + map lookup speed.&#10;&#10;HTTP RPS — how many real HTTP requests the server handles per second from the browser. Includes network stack, JSON encode/decode, and Go's HTTP mux overhead.&#10;&#10;The gap between the two is the HTTP overhead cost.">
+    Two measurements: pure routing speed (internal) vs real HTTP throughput.
+  </p>
+  <div class="form-row">
+    <div class="field">
+      <label data-tip="How many route picks to run for the internal benchmark. Higher = more accurate, takes longer.">internal n</label>
+      <input id="cap-n" value="50000" class="short" type="number">
+    </div>
+    <div class="field">
+      <label data-tip="Concurrent browser fetch() calls for the HTTP test. Limited by browser (~6 per host by default, but fetch uses keep-alive so higher concurrency is fine).">http concurrency</label>
+      <input id="cap-conc" value="20" class="short" type="number">
+    </div>
+    <div class="field">
+      <label data-tip="How long to run the HTTP benchmark in seconds.">http duration (s)</label>
+      <input id="cap-dur" value="3" class="short" type="number">
+    </div>
+    <div class="field"><label>&nbsp;</label>
+      <button class="btn btn-blue" onclick="runCapTest()"
+        data-tip="Run both benchmarks and show the results. The internal benchmark completes in milliseconds. The HTTP benchmark runs for the configured duration.">▶ Run Test</button>
+    </div>
+  </div>
+  <div class="progress-bar"><div class="progress-fill" id="cap-progress" style="width:0%"></div></div>
+  <div class="cap-result" id="cap-result" style="color:#484f58">run the test to see capacity numbers</div>
 </div>
 
 <!-- ── Layer 5: Failover Lab ────────────────────── -->
@@ -527,6 +609,105 @@ function showError(msg) {
   el.textContent = msg;
   el.style.display = 'block';
   setTimeout(() => el.style.display='none', 4000);
+}
+
+// ── geo routing ──────────────────────────────────────
+async function geoRoute(region) {
+  try {
+    const res = await fetch('/geo-route', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({cluster: 'api', region}),
+    });
+    if (!res.ok) { const e = await res.json(); throw new Error(e.error); }
+    const data = await res.json();
+    const b = data.backend;
+    const scores = data.dc_scores || [];
+    const scoreHTML = scores.map(s => {
+      const cls = !s.has_healthy ? 'geo-score down' : s.chosen ? 'geo-score chosen' : 'geo-score other';
+      const suffix = !s.has_healthy ? ' ✗ down' : s.chosen ? ' ← chosen' : '';
+      return ` + "`" + `<span class="${cls}" data-tip="${s.dc}: ${s.latency_ms}ms from ${region}${!s.has_healthy ? ' — no healthy backends, skipped' : ''}">${s.dc} ${s.latency_ms}ms${suffix}</span>` + "`" + `;
+    }).join('');
+    document.getElementById('geo-result').innerHTML =
+      ` + "`" + `<strong style="color:#3fb950">${region}</strong> → <strong style="color:#f0f6fc">${b.id}</strong> (${b.dc}, weight:${b.weight})<div class="geo-scores">${scoreHTML}</div>` + "`" + `;
+  } catch(e) {
+    document.getElementById('geo-result').innerHTML = ` + "`" + `<span style="color:#f85149">${e.message}</span>` + "`" + `;
+  }
+}
+
+// ── capacity test ─────────────────────────────────────
+let capRunning = false;
+
+async function runCapTest() {
+  if (capRunning) return;
+  capRunning = true;
+  document.getElementById('cap-result').innerHTML = '<span style="color:#8b949e">running internal benchmark…</span>';
+  document.getElementById('cap-progress').style.width = '10%';
+
+  // 1. Internal benchmark (server-side)
+  const n    = parseInt(document.getElementById('cap-n').value)    || 50000;
+  const conc = parseInt(document.getElementById('cap-conc').value) || 20;
+  const dur  = parseInt(document.getElementById('cap-dur').value)  || 3;
+
+  let internalRPS = 0, nsPerOp = 0;
+  try {
+    const res  = await fetch('/bench', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({n, cluster: 'api'}),
+    });
+    const data = await res.json();
+    internalRPS = data.rps;
+    nsPerOp     = data.ns_per_op;
+  } catch(e) { showError('bench failed: ' + e.message); capRunning = false; return; }
+
+  document.getElementById('cap-progress').style.width = '30%';
+  document.getElementById('cap-result').innerHTML = '<span style="color:#8b949e">running HTTP benchmark…</span>';
+
+  // 2. HTTP benchmark (browser-side concurrent fetch)
+  let httpCount = 0, httpErrors = 0;
+  const body    = JSON.stringify({cluster:'api', algo:'round-robin'});
+  const headers = {'Content-Type': 'application/json'};
+  const deadline = Date.now() + dur * 1000;
+  const totalDur = dur * 1000;
+
+  const worker = async () => {
+    while (Date.now() < deadline) {
+      try {
+        const r = await fetch('/route', {method:'POST', headers, body});
+        if (r.ok) httpCount++; else httpErrors++;
+      } catch(_) { httpErrors++; }
+      // update progress bar
+      const pct = 30 + 65 * Math.min(1, (dur*1000 - (deadline - Date.now())) / totalDur);
+      document.getElementById('cap-progress').style.width = pct + '%';
+    }
+  };
+
+  await Promise.all(Array.from({length: conc}, worker));
+  document.getElementById('cap-progress').style.width = '100%';
+
+  const httpRPS  = Math.round(httpCount / dur);
+  const errRate  = httpCount + httpErrors > 0
+    ? ((httpErrors / (httpCount + httpErrors)) * 100).toFixed(1)
+    : '0.0';
+
+  document.getElementById('cap-result').innerHTML = ` + "`" + `
+    <div class="cap-grid">
+      <div>
+        <div class="cap-big">${internalRPS.toLocaleString()}</div>
+        <div class="cap-label">internal req/s</div>
+        <div style="font-size:11px;color:#484f58;margin-top:2px">${nsPerOp} ns/op · pure Go routing speed</div>
+      </div>
+      <div>
+        <div class="cap-big">${httpRPS.toLocaleString()}</div>
+        <div class="cap-label">HTTP req/s</div>
+        <div style="font-size:11px;color:#484f58;margin-top:2px">${conc} concurrent · ${httpErrors} errors (${errRate}%)</div>
+      </div>
+    </div>
+    <div class="cap-note">
+      Internal = raw routing speed (mutex + map lookup, no network).<br>
+      HTTP = real end-to-end: TCP, HTTP/1.1 keep-alive, JSON encode/decode, mux dispatch.<br>
+      The gap between the two is the HTTP stack overhead per request.
+    </div>` + "`" + `;
+  capRunning = false;
 }
 
 // ── failover lab ─────────────────────────────────────

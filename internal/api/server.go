@@ -5,17 +5,19 @@ import (
 	"errors"
 	"net/http"
 
+	"lbsim/internal/dispatcher"
 	"lbsim/internal/registry"
 	"lbsim/internal/router"
 )
 
 type Server struct {
-	reg    *registry.Registry
-	router *router.Router
+	reg        *registry.Registry
+	router     *router.Router
+	dispatcher *dispatcher.Dispatcher
 }
 
-func NewServer(reg *registry.Registry, rtr *router.Router) *Server {
-	return &Server{reg: reg, router: rtr}
+func NewServer(reg *registry.Registry, rtr *router.Router, d *dispatcher.Dispatcher) *Server {
+	return &Server{reg: reg, router: rtr, dispatcher: d}
 }
 
 func (s *Server) Routes() http.Handler {
@@ -27,6 +29,10 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("PATCH /clusters/{cluster}/backends/{id}/health", s.setHealth)
 	mux.HandleFunc("POST /route", s.routeRequest)
 	mux.HandleFunc("GET /route/stats", s.routeStats)
+	mux.HandleFunc("POST /dispatcher/start", s.dispatcherStart)
+	mux.HandleFunc("POST /dispatcher/stop", s.dispatcherStop)
+	mux.HandleFunc("POST /dispatcher/reset", s.dispatcherReset)
+	mux.HandleFunc("GET /dispatcher/stats", s.dispatcherStats)
 	return mux
 }
 
@@ -139,4 +145,44 @@ func (s *Server) routeRequest(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) routeStats(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.router.Stats())
+}
+
+type dispatchStartReq struct {
+	Cluster string          `json:"cluster"`
+	Algo    router.Algorithm `json:"algo"`
+	RPS     int             `json:"rps"`
+}
+
+func (s *Server) dispatcherStart(w http.ResponseWriter, r *http.Request) {
+	var req dispatchStartReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if req.Cluster == "" {
+		req.Cluster = "api"
+	}
+	if req.Algo == "" {
+		req.Algo = router.RoundRobin
+	}
+	if !s.dispatcher.Start(req.Cluster, req.Algo, req.RPS) {
+		writeErr(w, http.StatusConflict, "dispatcher already running")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "started"})
+}
+
+func (s *Server) dispatcherStop(w http.ResponseWriter, r *http.Request) {
+	s.dispatcher.Stop()
+	writeJSON(w, http.StatusOK, map[string]string{"status": "stopped"})
+}
+
+func (s *Server) dispatcherReset(w http.ResponseWriter, r *http.Request) {
+	s.dispatcher.Stop()
+	s.dispatcher.Reset()
+	writeJSON(w, http.StatusOK, map[string]string{"status": "reset"})
+}
+
+func (s *Server) dispatcherStats(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.dispatcher.Stats())
 }

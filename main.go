@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"lbsim/internal/api"
+	"lbsim/internal/dispatcher"
 	"lbsim/internal/healthcheck"
 	"lbsim/internal/registry"
 	"lbsim/internal/router"
@@ -30,7 +31,8 @@ func main() {
 	hc.Start(context.Background())
 
 	rtr := router.New(reg)
-	srv := api.NewServer(reg, rtr)
+	disp := dispatcher.New(rtr)
+	srv := api.NewServer(reg, rtr, disp)
 
 	addr := ":8080"
 	log.Printf("lbsim %s — control plane API listening on %s", Version, addr)

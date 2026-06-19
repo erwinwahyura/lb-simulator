@@ -23,9 +23,8 @@ var (
 //
 // Why in-memory (not Redis/Scylla yet): Layer 1 keeps it boring on purpose so
 // the routing concepts stay in focus. Swapping this for Redis later is a drop-in
-// — the method set is the seam. That swap is itself great interview material
-// ("control plane state lived behind an interface so the backing store was
-//  pluggable").
+// — the method set is the seam. Swap the implementation for Redis/Scylla and
+// nothing above it changes.
 type Registry struct {
 	mu       sync.RWMutex
 	clusters map[string]*Cluster

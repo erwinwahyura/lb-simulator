@@ -2,12 +2,11 @@
 
 A learn-by-building control plane for a software load balancer, in Go.
 Goal: internalize traffic routing, health checking, failover, and global
-traffic management — the concepts behind the Rakuten LB Platform role — without
-the kernel-networking rabbit hole.
+traffic management — without the kernel-networking rabbit hole.
 
 We build the **control plane** (the brain) and a **fake data plane** (a
-dispatcher that asks "which backend?"). All the interesting logic lives in the
-control plane, which is exactly where the job lives.
+dispatcher that asks "which backend?"). All the interesting logic lives in
+the control plane.
 
 ## Vocabulary map (networking term -> thing you already know)
 
@@ -78,9 +77,8 @@ Every push bumps the version in `version.go`. Version log:
 - **Layer 5** — failover & draining: kill a backend/DC, watch traffic rebalance live.
 - **Layer 6** — global traffic management: GeoDNS / latency-based DC selection.
 
-## Architecture seam worth saying out loud in interviews
+## Architecture note
 
 The registry's method set is the seam. Today it's an in-memory map behind a
 RWMutex. Swap that implementation for Redis/Scylla and nothing above it changes
-— the control plane's state backing store is pluggable. That's the same
-precompute/cache-layer discipline used in promo-pricing systems.
+— the control plane's state backing store is pluggable.

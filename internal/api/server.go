@@ -8,6 +8,8 @@ import (
 
 	"lbsim/internal/dispatcher"
 	"lbsim/internal/georouter"
+	"lbsim/internal/l7router"
+	"lbsim/internal/pipeline"
 	"lbsim/internal/registry"
 	"lbsim/internal/router"
 )
@@ -19,10 +21,12 @@ type Server struct {
 	router     *router.Router
 	dispatcher *dispatcher.Dispatcher
 	geo        *georouter.GeoRouter
+	l7         *l7router.L7Router
+	pipe       *pipeline.Pipeline
 }
 
-func NewServer(reg *registry.Registry, rtr *router.Router, d *dispatcher.Dispatcher, geo *georouter.GeoRouter) *Server {
-	return &Server{reg: reg, router: rtr, dispatcher: d, geo: geo}
+func NewServer(reg *registry.Registry, rtr *router.Router, d *dispatcher.Dispatcher, geo *georouter.GeoRouter, l7 *l7router.L7Router, pipe *pipeline.Pipeline) *Server {
+	return &Server{reg: reg, router: rtr, dispatcher: d, geo: geo, l7: l7, pipe: pipe}
 }
 
 func (s *Server) Routes() http.Handler {
@@ -41,6 +45,11 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /failover", s.failover)
 	mux.HandleFunc("POST /geo-route", s.geoRoute)
 	mux.HandleFunc("POST /bench", s.bench)
+	mux.HandleFunc("GET /routes", s.listRoutes)
+	mux.HandleFunc("POST /routes", s.addRoute)
+	mux.HandleFunc("DELETE /routes/{id}", s.deleteRoute)
+	mux.HandleFunc("POST /pipeline", s.processPipeline)
+	mux.HandleFunc("GET /pipeline/traces", s.pipelineTraces)
 	return mux
 }
 
@@ -283,4 +292,79 @@ func (s *Server) bench(w http.ResponseWriter, r *http.Request) {
 		"rps":        int64(rps),
 		"ns_per_op":  nsPerOp,
 	})
+}
+
+// ── L7 route rules ────────────────────────────────────────────────────────
+
+func (s *Server) listRoutes(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.l7.ListRules())
+}
+
+type addRouteReq struct {
+	ID         string `json:"id"`
+	Method     string `json:"method"`
+	PathPrefix string `json:"path_prefix"`
+	Cluster    string `json:"cluster"`
+	Priority   int    `json:"priority"`
+}
+
+func (s *Server) addRoute(w http.ResponseWriter, r *http.Request) {
+	var req addRouteReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if req.PathPrefix == "" || req.Cluster == "" {
+		writeErr(w, http.StatusBadRequest, "path_prefix and cluster are required")
+		return
+	}
+	if req.Method == "" {
+		req.Method = "*"
+	}
+	rule := &l7router.Rule{
+		ID: req.ID, Method: req.Method, PathPrefix: req.PathPrefix,
+		Cluster: req.Cluster, Priority: req.Priority,
+	}
+	s.l7.AddRule(rule)
+	writeJSON(w, http.StatusCreated, rule)
+}
+
+func (s *Server) deleteRoute(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !s.l7.DeleteRule(id) {
+		writeErr(w, http.StatusNotFound, "rule not found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ── Pipeline ──────────────────────────────────────────────────────────────
+
+type pipelineReq struct {
+	Method   string `json:"method"`
+	Path     string `json:"path"`
+	ClientIP string `json:"client_ip"`
+}
+
+func (s *Server) processPipeline(w http.ResponseWriter, r *http.Request) {
+	var req pipelineReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if req.Method == "" {
+		req.Method = "GET"
+	}
+	if req.Path == "" {
+		req.Path = "/"
+	}
+	if req.ClientIP == "" {
+		req.ClientIP = "10.0.0.1"
+	}
+	trace := s.pipe.Process(req.Method, req.Path, req.ClientIP)
+	writeJSON(w, http.StatusOK, trace)
+}
+
+func (s *Server) pipelineTraces(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.pipe.Traces())
 }

@@ -85,6 +85,35 @@ const dashboardHTML = `<!DOCTYPE html>
   .empty { color: #8b949e; font-size: 12px; padding: 18px 14px; }
   .error-bar { background: #3a1a1a; border: 1px solid #da3633; color: #f85149; padding: 7px 12px; border-radius: 6px; font-size: 12px; margin-bottom: 14px; display: none; }
 
+  /* ── l7 routes ── */
+  .routes-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 14px; }
+  .routes-table th { text-align: left; padding: 6px 10px; color: #8b949e; font-weight: 500; border-bottom: 1px solid #30363d; font-size: 11px; }
+  .routes-table td { padding: 6px 10px; border-bottom: 1px solid #21262d; color: #e6edf3; }
+  .routes-table tr:last-child td { border-bottom: none; }
+  .routes-table .priority { color: #58a6ff; }
+  .routes-table .cluster-tag { background: #0d2040; color: #58a6ff; border: 1px solid #1f4070; border-radius: 4px; padding: 1px 6px; font-size: 10px; }
+  .routes-table .cluster-tag.dead { background: #3a1a1a; color: #f85149; border-color: #da3633; }
+
+  /* ── pipeline ── */
+  .trace-box { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 14px; margin-top: 12px; font-size: 11px; line-height: 1.7; }
+  .trace-box .ok    { color: #3fb950; }
+  .trace-box .err   { color: #f85149; }
+  .trace-box .warn  { color: #d29922; }
+  .trace-box .dim   { color: #484f58; }
+  .trace-box .label { color: #8b949e; display: inline-block; width: 140px; }
+  .trace-log { margin-top: 14px; }
+  .trace-log-title { font-size: 11px; color: #8b949e; margin-bottom: 6px; }
+  .trace-row { display: grid; grid-template-columns: 70px 50px 1fr 90px 90px 60px 60px; gap: 6px; align-items: center; font-size: 11px; padding: 4px 0; border-bottom: 1px solid #21262d; }
+  .trace-row.conflict { background: #1a1000; }
+  .trace-row.error    { background: #1a0808; }
+  .trace-row .method  { color: #58a6ff; font-weight: 600; }
+  .trace-row .path    { color: #e6edf3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .trace-row .tag     { padding: 1px 5px; border-radius: 3px; font-size: 10px; text-align: center; }
+  .tag-ok      { background: #1a3a2a; color: #3fb950; }
+  .tag-conflict{ background: #3a2e1a; color: #d29922; }
+  .tag-error   { background: #3a1a1a; color: #f85149; }
+  .trace-log-header { display: grid; grid-template-columns: 70px 50px 1fr 90px 90px 60px 60px; gap: 6px; font-size: 10px; color: #484f58; padding: 4px 0; border-bottom: 1px solid #30363d; text-transform: uppercase; }
+
   /* ── geo routing ── */
   .region-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
   .region-btn { padding: 8px 14px; font-size: 12px; font-family: inherit; border-radius: 6px; border: 1px solid #30363d; cursor: pointer; background: #21262d; color: #e6edf3; text-align: left; }
@@ -152,7 +181,7 @@ const dashboardHTML = `<!DOCTYPE html>
 <div id="tip"></div>
 
 <h1>lbsim — Control Plane</h1>
-<p class="subtitle">L1 registry · L2 health checking · L3 routing · L4 dispatcher · L5 failover · L6 geo routing · hover any element for explanation</p>
+<p class="subtitle">L1–L7 · registry · health · routing · dispatcher · failover · geo · L7 pipeline · hover any element for explanation</p>
 
 <div id="error-bar" class="error-bar"></div>
 
@@ -209,6 +238,59 @@ const dashboardHTML = `<!DOCTYPE html>
   </div>
 
   <div id="disp-bars" class="disp-bars"></div>
+</div>
+
+<!-- ── Layer 7: L7 Route Rules ───────────────────── -->
+<div class="panel">
+  <h2>L7 Route Rules — Layer 7</h2>
+  <p style="font-size:11px;color:#8b949e;margin-bottom:12px"
+     data-tip="L7 routing reads the HTTP request (path, method, headers) before picking a cluster.&#10;&#10;Rules are checked in priority order (lowest first). First match wins.&#10;&#10;Without L7 rules, all requests go to one cluster regardless of path. With L7 rules, /api/* can go to the api cluster while /static/* goes to a CDN or static-file cluster.">
+    Rules are matched in priority order. First match wins. L7 runs after L4 — see the Pipeline below to watch them interact.
+  </p>
+  <table class="routes-table" id="routes-table">
+    <thead><tr>
+      <th data-tip="Execution order — lower priority number = checked first.">priority</th>
+      <th data-tip="HTTP method filter. * matches any method.">method</th>
+      <th data-tip="Request path must start with this prefix to match.">path prefix</th>
+      <th data-tip="The cluster requests are sent to when this rule matches.">→ cluster</th>
+      <th></th>
+    </tr></thead>
+    <tbody id="routes-body"><tr><td colspan="5" style="color:#484f58;padding:12px 10px">loading…</td></tr></tbody>
+  </table>
+  <div class="form-row">
+    <div class="field"><label data-tip="Lower number = higher priority. Use 10 for specific routes, 99 for catch-all.">priority</label><input id="rt-priority" value="10" class="short" type="number"></div>
+    <div class="field"><label data-tip="HTTP method. Use * to match all methods.">method</label><input id="rt-method" value="*" class="short"></div>
+    <div class="field"><label data-tip="Path prefix to match. Must start with /. Use / as a catch-all fallback.">path prefix</label><input id="rt-path" placeholder="/api/" style="width:120px"></div>
+    <div class="field"><label data-tip="Which cluster to route matching requests to. Must exist in the registry.">cluster</label><input id="rt-cluster" placeholder="api" class="short"></div>
+    <div class="field"><label>&nbsp;</label><button class="btn btn-green" onclick="addRoute()" data-tip="Add this rule to the L7 routing table.">+ Add Rule</button></div>
+  </div>
+</div>
+
+<!-- ── Layer 7: Request Pipeline ─────────────────── -->
+<div class="panel">
+  <h2>Request Pipeline — L4 + L7 + Conflict Detection</h2>
+  <p style="font-size:11px;color:#8b949e;margin-bottom:12px"
+     data-tip="A request enters the LB stack at L4 (TCP level) then L7 (HTTP level).&#10;&#10;L4 sees only client IP and port — it hashes the IP to pick a backend cluster.&#10;L7 sees the HTTP path — it matches against route rules to pick a cluster.&#10;&#10;Conflict: when L4 and L7 pick DIFFERENT clusters. L7 always wins, but if the L7 cluster has no backends, the request fails.&#10;&#10;Try: fire a request to /static/logo.png — L4 hashes your IP to 'api', L7 matches /static/ → 'static' (no backends). Conflict + error.">
+    Fire a request and watch it travel through L4 → L7 → backend. Try <strong style="color:#d29922">/static/logo.png</strong> to trigger an OSI conflict.
+  </p>
+  <div class="form-row">
+    <div class="field">
+      <label data-tip="HTTP method sent with the request.">method</label>
+      <select id="pipe-method" style="background:#0d1117;border:1px solid #30363d;color:#e6edf3;padding:5px 9px;border-radius:4px;font-family:inherit;font-size:12px">
+        <option>GET</option><option>POST</option><option>PUT</option><option>DELETE</option>
+      </select>
+    </div>
+    <div class="field"><label data-tip="The request path. L7 matches this against route rules. Try /api/users, /static/logo.png, /unknown.">path</label><input id="pipe-path" value="/api/users" style="width:180px"></div>
+    <div class="field"><label data-tip="Simulated client IP. L4 hashes this to pick a cluster. Change it to see different L4 decisions.">client IP</label><input id="pipe-ip" value="10.0.0.42" style="width:120px"></div>
+    <div class="field"><label>&nbsp;</label><button class="btn btn-blue" onclick="processPipeline()" data-tip="Send this request through the full L4 + L7 pipeline and show the trace.">▶ Process</button></div>
+    <div class="field"><label>&nbsp;</label><button class="btn btn-gray" onclick="pipelineScenario('conflict')" data-tip="Pre-fill a request that causes an L4/L7 conflict: L4 picks 'api', L7 matches /static/ → 'static' (no backends).">⚠ Conflict demo</button></div>
+  </div>
+  <div id="trace-box" class="trace-box" style="color:#484f58">fire a request to see the pipeline trace</div>
+  <div class="trace-log" id="trace-log-wrap" style="display:none">
+    <div class="trace-log-title">request history (last 20)</div>
+    <div class="trace-log-header"><span>time</span><span>method</span><span>path</span><span>L4 cluster</span><span>L7 cluster</span><span>backend</span><span>status</span></div>
+    <div id="trace-log"></div>
+  </div>
 </div>
 
 <!-- ── Layer 6: Geo Routing ──────────────────────── -->
@@ -519,9 +601,10 @@ async function addBackend() {
 // ── cluster rendering ────────────────────────────────
 async function load() {
   try {
-    const [cRes] = await Promise.all([fetch('/clusters'), loadRouteStats(), loadDispStats()]);
+    const [cRes] = await Promise.all([fetch('/clusters'), loadRouteStats(), loadDispStats(), loadRoutes(), loadTraces()]);
     if (!cRes.ok) throw new Error(await cRes.text());
     lastClusters = await cRes.json();
+    knownClusters = lastClusters.map(c => c.name);
     render(lastClusters);
     document.getElementById('error-bar').style.display = 'none';
     document.getElementById('ticker').textContent = 'last updated: ' + new Date().toLocaleTimeString();
@@ -609,6 +692,143 @@ function showError(msg) {
   el.textContent = msg;
   el.style.display = 'block';
   setTimeout(() => el.style.display='none', 4000);
+}
+
+// ── L7 routes ────────────────────────────────────────
+let knownClusters = [];
+
+async function loadRoutes() {
+  try {
+    const res = await fetch('/routes');
+    const rules = await res.json();
+    renderRoutes(rules);
+  } catch(_) {}
+}
+
+function renderRoutes(rules) {
+  const tbody = document.getElementById('routes-body');
+  if (!rules || !rules.length) {
+    tbody.innerHTML = '<tr><td colspan="5" style="color:#484f58;padding:10px">no rules — add one below</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rules.map(r => {
+    const hasBackends = knownClusters.includes(r.cluster);
+    const clsCls = hasBackends ? 'cluster-tag' : 'cluster-tag dead';
+    const clsTip = hasBackends ? r.cluster : r.cluster + ' (no backends — requests will fail)';
+    return ` + "`" + `<tr>
+      <td class="priority" data-tip="Priority ${r.priority} — checked ${r.priority < 50 ? 'early' : 'late'} in the rule list.">${r.priority}</td>
+      <td>${r.method}</td>
+      <td style="color:#e6edf3"><strong>${r.path_prefix}</strong></td>
+      <td><span class="${clsCls}" data-tip="${clsTip}">${r.cluster}</span></td>
+      <td><button class="btn btn-gray" onclick="deleteRoute('${r.id}')" style="padding:2px 7px;font-size:10px"
+          data-tip="Remove rule ${r.id}. Requests that previously matched this rule will fall through to the next matching rule.">✕</button></td>
+    </tr>` + "`" + `;
+  }).join('');
+}
+
+async function addRoute() {
+  const priority   = parseInt(document.getElementById('rt-priority').value) || 10;
+  const method     = document.getElementById('rt-method').value.trim()  || '*';
+  const pathPrefix = document.getElementById('rt-path').value.trim();
+  const cluster    = document.getElementById('rt-cluster').value.trim();
+  if (!pathPrefix || !cluster) { showError('path_prefix and cluster are required'); return; }
+  try {
+    const res = await fetch('/routes', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({method, path_prefix: pathPrefix, cluster, priority}),
+    });
+    if (!res.ok) throw new Error((await res.json()).error);
+    document.getElementById('rt-path').value = '';
+    loadRoutes();
+  } catch(e) { showError(e.message); }
+}
+
+async function deleteRoute(id) {
+  await fetch(` + "`" + `/routes/${id}` + "`" + `, {method: 'DELETE'});
+  loadRoutes();
+}
+
+// ── pipeline ──────────────────────────────────────────
+function pipelineScenario(name) {
+  if (name === 'conflict') {
+    document.getElementById('pipe-method').value = 'GET';
+    document.getElementById('pipe-path').value   = '/static/logo.png';
+    document.getElementById('pipe-ip').value     = '10.0.0.42';
+  }
+}
+
+async function processPipeline() {
+  const method   = document.getElementById('pipe-method').value;
+  const path     = document.getElementById('pipe-path').value.trim()   || '/';
+  const clientIP = document.getElementById('pipe-ip').value.trim() || '10.0.0.1';
+  try {
+    const res = await fetch('/pipeline', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({method, path, client_ip: clientIP}),
+    });
+    const t = await res.json();
+    renderTrace(t);
+    await loadTraces();
+  } catch(e) { showError(e.message); }
+}
+
+function renderTrace(t) {
+  const ok      = !t.error && !t.conflict;
+  const backend = t.backend ? t.backend.id : '—';
+  const latency = t.backend ? t.latency_ms + 'ms' : '—';
+
+  const headerRows = Object.entries(t.headers || {}).map(([k,v]) =>
+    ` + "`" + `<div><span class="label">${k}</span><span style="color:#e6edf3">${v}</span></div>` + "`" + `
+  ).join('');
+
+  const conflictNote = t.conflict
+    ? ` + "`" + `<div class="warn">⚠ OSI CONFLICT — L4 picked cluster "<strong>${t.l4_cluster}</strong>" (by IP hash), L7 overrides to "<strong>${t.l7_cluster}</strong>" (by path rule). L7 wins — but if that cluster has no backends, the request fails.</div>` + "`" + `
+    : '';
+  const errorNote = t.error
+    ? ` + "`" + `<div class="err">✗ ERROR: ${t.error}</div>` + "`" + `
+    : ` + "`" + `<div class="ok">✓ routed to <strong>${backend}</strong> (${t.backend?.dc}, ${latency})</div>` + "`" + `;
+
+  document.getElementById('trace-box').innerHTML = ` + "`" + `
+    <div style="margin-bottom:10px">
+      <span class="dim">${t.request_id}</span> &nbsp;
+      <span style="color:#58a6ff;font-weight:600">${t.method}</span>
+      <span style="color:#e6edf3"> ${t.path}</span>
+      <span class="dim"> from ${t.client_ip}</span>
+    </div>
+    <div><span class="label">L4 decision</span>IP hash → cluster <strong>${t.l4_cluster||'none'}</strong> <span class="dim">(only sees IP:port)</span></div>
+    <div><span class="label">L7 matched rule</span><span style="color:#d29922">${t.matched_rule}</span></div>
+    <div><span class="label">L7 decision</span>path match → cluster <strong>${t.l7_cluster||'none'}</strong></div>
+    ${conflictNote}
+    ${errorNote}
+    <details style="margin-top:10px">
+      <summary style="cursor:pointer;color:#8b949e;font-size:11px">injected headers ▸</summary>
+      <div style="margin-top:6px;padding-left:8px;border-left:2px solid #30363d">${headerRows}</div>
+    </details>` + "`" + `;
+}
+
+async function loadTraces() {
+  try {
+    const res = await fetch('/pipeline/traces');
+    const traces = await res.json();
+    if (!traces || !traces.length) return;
+    document.getElementById('trace-log-wrap').style.display = 'block';
+    document.getElementById('trace-log').innerHTML = traces.slice(0,20).map(t => {
+      const rowCls = t.error ? 'trace-row error' : t.conflict ? 'trace-row conflict' : 'trace-row';
+      const status = t.error ? '<span class="tag tag-error">error</span>'
+                   : t.conflict ? '<span class="tag tag-conflict">conflict</span>'
+                   : '<span class="tag tag-ok">ok</span>';
+      const be = t.backend ? t.backend.id : '—';
+      return ` + "`" + `<div class="${rowCls}" data-tip="${t.request_id}: L4→${t.l4_cluster} L7→${t.l7_cluster} ${t.error||''}">
+        <span class="dim">${t.timestamp}</span>
+        <span class="method">${t.method}</span>
+        <span class="path" title="${t.path}">${t.path}</span>
+        <span class="dim">${t.l4_cluster||'—'}</span>
+        <span class="dim">${t.l7_cluster||'—'}</span>
+        <span class="dim">${be}</span>
+        ${status}
+      </div>` + "`" + `;
+    }).join('');
+  } catch(_) {}
 }
 
 // ── geo routing ──────────────────────────────────────

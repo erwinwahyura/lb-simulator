@@ -70,6 +70,7 @@ Every push bumps the version in `version.go`. Version log:
 | v0.4.1  | —     | Hover tooltips on every interactive element — algorithms, health states, buttons, labels, traffic bars |
 | v0.5.0  | L5    | Failover & draining: SetDCHealth bulk API, Failover Lab panel, per-DC cards, event log |
 | v0.6.0  | L6    | Geo routing: latency-based DC selection with fallback; /bench endpoint; Capacity Test panel |
+| v0.7.0  | L7    | L7 path routing + full request pipeline: L4 vs L7 conflict detection, X-Request-ID headers, trace log |
 
 ## Layer roadmap
 
